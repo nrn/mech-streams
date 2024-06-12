@@ -15,7 +15,7 @@ function run (tree) {
       if (source.pipe) {
         source = source.pipe(devnull())
       }
-      return source
+      return origin
     }
     if (next.cmd in cmds) {
       let children = []
@@ -33,7 +33,7 @@ function once (v) {
   let stream = base()
   stream.resume = function () {
     this.sink.write(v)
-    this.sink.end()
+    this.end()
   }
   return stream
 }
@@ -44,18 +44,6 @@ function devnull () {
   stream.paused = false
 
   return stream
-  // return {
-  //   write: function (data) {
-  //     // This shouldn't log
-  //     console.log('devnull', data)
-  //   },
-  //   pause: false,
-  //   abort: abort,
-  //   end: function (err) {
-  //     this.ended = err || true
-  //     if (err) console.error(err)
-  //   }
-  // }
 }
 
 // streams stuff largely taken from https://github.com/dominictarr/push-streams-talk
@@ -114,13 +102,13 @@ function base () {
     },
     
     abort: function (err) {
-      this.paused = true
       if (this.source) this.source.abort(err)
       else this.end(err)
     },
 
     end: function (err) {
       this.ended = true
+      this.paused = true
       if (this.sink) {
         this.sink.end(err)
       }
@@ -148,9 +136,9 @@ function asyncMapStream (fn) {
   stream.write = function (data) {
     var self = this
     self.paused = true
-    fn(data, function (err, mapped) {
+    fn.call(this, data, function (err, mapped) {
       self.paused = false
-      if (err) return self.sink.end(self.ended = err)
+      if (err) return self.abort(err)
       self.sink.write(mapped)
       self.resume()
     })
@@ -218,7 +206,7 @@ class AsyncMapStream extends Base {
       self.paused = true
       fn.call(this, data, function (err, mapped) {
         self.paused = false
-        if (err) return self.sink.end(self.ended = err)
+        if (err) return self.abort(err)
         self.sink.write(mapped)
         self.resume()
       })
@@ -255,10 +243,12 @@ function test () {
   register('values', function (cmd) {
     var i = 0
     let values = new Base() 
+    let it = cmd.val[Symbol.iterator]()
     values.resume = function () {
       while (!this.sink.paused && !this.ended) {
-        if (this.ended = i >= cmd.val.length) this.sink.end()
-        else this.sink.write(cmd.val[i++])
+        let step = it.next()
+        if (step.done) this.end()
+        else this.sink.write(step.value)
       }
     }
     return values
@@ -273,17 +263,52 @@ function test () {
         let self = this
         setTimeout(function () {
           self.resume()
-        }, 10)
+        }, 100)
       } else {
         this.sink.end()
       }
     }
     return repeat
   })
+  
+  register('tee', function (cmd, children, run) {
+    let running = run(children)
+    return new MapStream(function (data) {
+      running.write(data)
+      return data
+    })
+  })
+
+  register('limit', function (cmd) {
+    let i = 0
+    return new AsyncMapStream(function (data, next) {
+      i++
+      if (i > cmd.val) {
+        next(true)
+      } else {
+        next(null, data)
+      }
+    })
+  })
+
+  function* count () {
+    let i = 0
+    while (true) {
+      yield i;
+      i++
+    }
+    return i
+  }
 
   run([
-    { cmd: 'values', val: [ 1, 2, 3 ] },
+    { cmd: 'values', val: count() },
     { cmd: 'sum', val: 1},
+    { cmd: 'tee' },
+    [
+      { cmd: 'sum', val: 100 },
+      { cmd: 'log' }
+    ],
+    { cmd: 'limit', val: 4 },
     { cmd: 'sleep', val: 2 },
     { cmd: 'sum', val: 3},
     { cmd: 'log' },
@@ -292,7 +317,7 @@ function test () {
       { cmd: 'repeat', val: 'hello' },
       { cmd: 'log' }
     ],
-    { cmd: 'sum', val: 8},
+    { cmd: 'sum', val: 7},
     { cmd: 'log' }
   ])
 }
