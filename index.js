@@ -225,7 +225,6 @@ function test () {
 
   register('sum', function (cmd) {
     return new MapStream(function (i) { 
-      if (typeof i !== 'number') i = 0
       return i + cmd.val
     })
   })
@@ -315,6 +314,7 @@ function test () {
     { cmd: 'sleep', val: 2 },
     [ 
       { cmd: 'repeat', val: 'hello' },
+      { cmd: 'sum', val: ' world'},
       { cmd: 'log' }
     ],
     { cmd: 'sum', val: 7},
