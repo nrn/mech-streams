@@ -10,10 +10,8 @@ function run (tree) {
   let origin = source = new MapStream()
   while (consumed < tree.length) {
     consumed+=1
-    console.log(consumed)
     let next = tree[consumed]
     if (next == null) {
-      console.log('all consumed')
       if (source.pipe) {
         source = source.pipe(devnull())
       }
@@ -26,40 +24,44 @@ function run (tree) {
         children = tree[consumed]
       }
       source = source.pipe(cmds[next.cmd](next, children, run))
-      console.log(source)
     }
   }
   return origin
 }
 
 function once (v) {
-  return {
-    resume: function () {
-      this.sink.write(v)
-      this.sink.end()
-    },
-    end: throughEnd,
-    abort: abort,
-    sink: null,
-    pipe: pipe
+  let stream = base()
+  stream.resume = function () {
+    this.sink.write(v)
+    this.sink.end()
   }
+  return stream
 }
 
 function devnull () {
-  return {
-    write: function (data) {
-      console.log('devnull', data)
-    },
-    pause: false,
-    abort: abort,
-    end: function (err) {
-      this.ended = err || true
-      if (err) console.error(err)
-    }
-  }
+  let stream = base()
+
+  stream.paused = false
+
+  return stream
+  // return {
+  //   write: function (data) {
+  //     // This shouldn't log
+  //     console.log('devnull', data)
+  //   },
+  //   pause: false,
+  //   abort: abort,
+  //   end: function (err) {
+  //     this.ended = err || true
+  //     if (err) console.error(err)
+  //   }
+  // }
 }
 
 // streams stuff largely taken from https://github.com/dominictarr/push-streams-talk
+// one difference is not really distinqusing 
+//
+// thse functions not used ATM
 function pipe (sink) {
   this.sink = sink
   sink.source = this
@@ -78,12 +80,86 @@ function throughEnd (err) {
   this.sink.end(err)
 }
 
+
 function throughResume () {
   if(!(this.paused = this.sink.paused)) {
     this.source.resume()
   }
 }
 
+// non-class implementation
+function base () {
+  return {
+    paused: true,
+    ended: false,
+    sink: null,
+    source: null,
+    resume: function () {
+      if(!(this.paused = this.sink.paused) && this.source) {
+        this.source.resume()
+      }
+    },
+
+    write: function (data) {
+      if (this.sink) {
+        this.paused = this.sink.paused
+      }
+    },
+
+    pipe: function (sink) {
+      this.sink = sink
+      sink.source = this
+      if (!sink.paused) this.resume()
+      return sink
+    },
+    
+    abort: function (err) {
+      this.paused = true
+      if (this.source) this.source.abort(err)
+      else this.end(err)
+    },
+
+    end: function (err) {
+      this.ended = true
+      if (this.sink) {
+        this.sink.end(err)
+      }
+    }
+  }
+}
+
+function mapStream (fn) {
+  const stream = base()
+  stream.write = function (data) {
+    var self = this
+    self.paused = true
+    fn.call(this, data, function (err, mapped) {
+      self.paused = false
+      if (err) return self.sink.end(self.ended = err)
+      self.sink.write(mapped)
+      self.resume()
+    })
+  }
+  return stream
+}
+
+function asyncMapStream (fn) {
+  const stream = base()
+  stream.write = function (data) {
+    var self = this
+    self.paused = true
+    fn(data, function (err, mapped) {
+      self.paused = false
+      if (err) return self.sink.end(self.ended = err)
+      self.sink.write(mapped)
+      self.resume()
+    })
+  }
+  return stream
+}
+
+
+// Class implementation
 class Base {
   paused = true;
   ended = false;
@@ -128,7 +204,7 @@ class MapStream extends Base {
       fn = function (a) { return a }
     }
     this.write = function (data) {
-      this.sink.write(fn(data))
+      this.sink.write(fn.call(this,data))
       this.paused = this.sink.paused
     }
   }
@@ -140,9 +216,9 @@ class AsyncMapStream extends Base {
     this.write = function (data) {
       var self = this
       self.paused = true
-      fn(data, function (err, mapped) {
+      fn.call(this, data, function (err, mapped) {
         self.paused = false
-        if (err) return self.sink.end(this.ended = err)
+        if (err) return self.sink.end(self.ended = err)
         self.sink.write(mapped)
         self.resume()
       })
@@ -150,29 +226,12 @@ class AsyncMapStream extends Base {
   }
 }
 
-// How ot make a map w/o classes
-// function map (fn) {
-//   return {
-//     write: function (data) {
-//       this.sink.write(fn(data))
-//       this.paused = this.sink.paused
-//     },
-//     end: throughEnd,
-//     abort: abort,
-//     paused: true,
-//     resume: throughResume,
-//     pipe: pipe
-//   }
-// }
-
-let a = 1
-
 test()
 function test () {
   register('log', function (cmd) {
-    return new MapStream(function (i) { 
-      console.log(arguments)
-      return i
+    return new MapStream(function (data) { 
+      console.log(data)
+      return data
     })
   })
 
@@ -185,30 +244,12 @@ function test () {
 
   register('sleep', function (cmd, children, run) {
     return new AsyncMapStream(function (data, next) {
-      const childPipes = children.map(function (child) {
-        return run([child])
-      })
+      let child = run(children)
       setTimeout(function () {
-        childPipes.forEach(function (child) { 
-          console.log(child)
-          child.abort()
-        })
+        child.abort()
         next(null, data)
       }, cmd.val * 1000)
     })
-  })
-
-  register('tee', function (cmd, children, run) {
-    return new MapStream(function (data) {
-      const childPipes = children.map(function (child) {
-        return run([child])
-      })
-      childPipes.forEach(function (child) {
-        child.write(data)
-      })
-      return data
-    })
-    
   })
 
   register('values', function (cmd) {
@@ -240,15 +281,6 @@ function test () {
     return repeat
   })
 
-
-  // register('pulse', async function (cmd, input, children, run) {
-  //   setInterval(function () {
-  //     run(children, input)
-  //   }, cmd.ms)
-  //   return await run(children, input)
-  // })
-
-
   run([
     { cmd: 'values', val: [ 1, 2, 3 ] },
     { cmd: 'sum', val: 1},
@@ -258,7 +290,7 @@ function test () {
     { cmd: 'sleep', val: 2 },
     [ 
       { cmd: 'repeat', val: 'hello' },
-      { cmd: 'repeat', val: 'goodbye' }
+      { cmd: 'log' }
     ],
     { cmd: 'sum', val: 8},
     { cmd: 'log' }
