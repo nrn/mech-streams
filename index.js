@@ -282,23 +282,20 @@ function test () {
     return repeat
   })
 
-  register('tick', function (cmd) {
-    let repeat = new Base()
-    let i = 0
-
-    repeat.resume = function () {
-      if (!this.sink.paused && !this.ended && i < cmd.val) {
-        i++
-        this.sink.write(null)
-        let self = this
-        setTimeout(function () {
-          self.resume()
-        }, 1000)
-      } else {
-        this.sink.end()
+  register('tick', function (cmd, children, run) {
+    let running = run(children)
+    return new MapStream(function (data) {
+      function tick (i) {
+        if (i > 0) {
+          running.write(data)
+          setTimeout(function () {
+            tick(i-1)
+          }, 1000)
+        }
       }
-    }
-    return repeat
+      tick(cmd.val)
+      return data
+    })
   })
   
   register('tee', function (cmd, children, run) {
@@ -353,6 +350,11 @@ function test () {
       { cmd: 'log' }
     ],
     { cmd: 'limit', val: 3 },
+    { cmd: 'tick', val: 2},
+    [
+      { cmd: 'sum', val: ' tick'},
+      { cmd: 'log' }
+    ],
     { cmd: 'sleep', val: 2 },
     { cmd: 'sum', val: 3},
     { cmd: 'log' },
