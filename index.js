@@ -131,13 +131,12 @@ function mapStream (fn) {
 function asyncMapStream (fn) {
   const stream = base()
   stream.write = function (data) {
-    var self = this
-    self.paused = true
-    fn.call(this, data, function (err, mapped) {
-      if (err) return self.abort(err)
-      self.sink.write(mapped)
-      self.paused = this.sink.paused
-      self.resume()
+    this.paused = true
+    fn.call(this, data, (err, mapped) => {
+      if (err) return this.abort(err)
+      this.sink.write(mapped)
+      this.paused = this.sink.paused
+      this.resume()
     })
   }
   return stream
@@ -331,6 +330,21 @@ function test () {
     })
   })
 
+  register('fetchJSON', function (cmd) {
+    return asyncMapStream(function (url, next) {
+      fetch(url)
+        .then((res) => res.json())
+        .then((json) => next(null, json))
+        .catch((err) => next(err))
+    })
+  })
+
+  register('pick', function (cmd) {
+    return mapStream(function (data) {
+      return data[cmd.val]
+    })
+  })
+
   function* count () {
     let i = 0
     while (true) {
@@ -341,30 +355,43 @@ function test () {
   }
 
   run([
-    { cmd: 'values', val: count() },
-    { cmd: 'skip', val: 3 },
-    { cmd: 'sum', val: 1},
-    { cmd: 'tee' },
-    [
-      { cmd: 'sum', val: 100 },
-      { cmd: 'log' }
-    ],
-    { cmd: 'limit', val: 3 },
-    { cmd: 'tick', val: 2},
-    [
-      { cmd: 'sum', val: ' tick'},
-      { cmd: 'log' }
-    ],
-    { cmd: 'sleep', val: 2 },
-    { cmd: 'sum', val: 3},
-    { cmd: 'log' },
-    { cmd: 'sleep', val: 2 },
-    [ 
-      { cmd: 'repeat', val: 'hello' },
-      { cmd: 'sum', val: ' world'},
-      { cmd: 'log' }
-    ],
-    { cmd: 'sum', val: 7},
+    { cmd: 'values', val: [ 'http://nrn.io', 'http://ward.fed.wiki' ] },
+    { cmd: 'sum', val: '/welcome-visitors.json' },
+    { cmd: 'fetchJSON' },
+    { cmd: 'pick', val: 'story' },
+    { cmd: 'pick', val: 0 },
+    { cmd: 'pick', val: 'text' },
+    { cmd: 'sum', val: `
+-------------------------------
+`},
     { cmd: 'log' }
   ])
+
+  // run([
+  //   { cmd: 'values', val: count() },
+  //   { cmd: 'skip', val: 3 },
+  //   { cmd: 'sum', val: 1},
+  //   { cmd: 'tee' },
+  //   [
+  //     { cmd: 'sum', val: 100 },
+  //     { cmd: 'log' }
+  //   ],
+  //   { cmd: 'limit', val: 3 },
+  //   { cmd: 'tick', val: 2},
+  //   [
+  //     { cmd: 'sum', val: ' tick'},
+  //     { cmd: 'log' }
+  //   ],
+  //   { cmd: 'sleep', val: 2 },
+  //   { cmd: 'sum', val: 3},
+  //   { cmd: 'log' },
+  //   { cmd: 'sleep', val: 2 },
+  //   [ 
+  //     { cmd: 'repeat', val: 'hello' },
+  //     { cmd: 'sum', val: ' world'},
+  //     { cmd: 'log' }
+  //   ],
+  //   { cmd: 'sum', val: 7},
+  //   { cmd: 'log' }
+  // ])
 }
