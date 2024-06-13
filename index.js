@@ -119,14 +119,11 @@ function base () {
 function mapStream (fn) {
   const stream = base()
   stream.write = function (data) {
-    var self = this
-    self.paused = true
-    fn.call(this, data, function (err, mapped) {
-      self.paused = false
-      if (err) return self.sink.end(self.ended = err)
-      self.sink.write(mapped)
-      self.resume()
-    })
+    if (fn == null) {
+      fn = function (a) { return a }
+    }
+    this.sink.write(fn.call(this,data))
+    this.paused = this.sink.paused
   }
   return stream
 }
@@ -137,11 +134,26 @@ function asyncMapStream (fn) {
     var self = this
     self.paused = true
     fn.call(this, data, function (err, mapped) {
-      self.paused = false
       if (err) return self.abort(err)
       self.sink.write(mapped)
+      self.paused = this.sink.paused
       self.resume()
     })
+  }
+  return stream
+}
+
+function filterStream (fn) {
+  const stream = base()
+  stream.write = function (data) {
+    if (fn == null) {
+      fn = function (a) { return a }
+    }
+    const pass = fn.call(this,data)
+    if (pass) {
+      this.sink.write(data)
+    }
+    this.paused = this.sink.paused
   }
   return stream
 }
@@ -269,6 +281,25 @@ function test () {
     }
     return repeat
   })
+
+  register('tick', function (cmd) {
+    let repeat = new Base()
+    let i = 0
+
+    repeat.resume = function () {
+      if (!this.sink.paused && !this.ended && i < cmd.val) {
+        i++
+        this.sink.write(null)
+        let self = this
+        setTimeout(function () {
+          self.resume()
+        }, 1000)
+      } else {
+        this.sink.end()
+      }
+    }
+    return repeat
+  })
   
   register('tee', function (cmd, children, run) {
     let running = run(children)
@@ -280,12 +311,25 @@ function test () {
 
   register('limit', function (cmd) {
     let i = 0
-    return new AsyncMapStream(function (data, next) {
+    return filterStream(function (data) {
       i++
       if (i > cmd.val) {
-        next(true)
+        this.abort()
+        return false
       } else {
-        next(null, data)
+        return true
+      }
+    })
+  })
+
+  register('skip', function (cmd) {
+    let i = 0
+    return filterStream(function (data) {
+      i++
+      if (i <= cmd.val) {
+        return false
+      } else {
+        return true
       }
     })
   })
@@ -301,13 +345,14 @@ function test () {
 
   run([
     { cmd: 'values', val: count() },
+    { cmd: 'skip', val: 3 },
     { cmd: 'sum', val: 1},
     { cmd: 'tee' },
     [
       { cmd: 'sum', val: 100 },
       { cmd: 'log' }
     ],
-    { cmd: 'limit', val: 4 },
+    { cmd: 'limit', val: 3 },
     { cmd: 'sleep', val: 2 },
     { cmd: 'sum', val: 3},
     { cmd: 'log' },
